@@ -10,7 +10,7 @@ LOOKBACK_DAYS = 5
 @dataclass
 class MeterReading:
     zaehlpunkt: str
-    daily_wh: float
+    daily_kwh: float
     reading_date: str
 
 
@@ -29,7 +29,7 @@ def latest_daily_reading(client, zaehlpunkt: str, *, now: datetime | None = None
     latest = messwerte[-1]
     return MeterReading(
         zaehlpunkt=zaehlpunkt,
-        daily_wh=latest["messwert"],
+        daily_kwh=latest["messwert"] / 1000,
         reading_date=latest["zeitBis"][:10],
     )
 
@@ -51,14 +51,14 @@ def quarter_hour_messwerte(
 
 
 def bucket_hourly(messwerte: list[dict]) -> list[tuple[datetime, float]]:
-    """Sum quarter-hour Wh values into (hour_start_utc, wh) buckets, sorted by time."""
+    """Sum quarter-hour kWh values into (hour_start_utc, kWh) buckets, sorted by time."""
     buckets: dict[datetime, float] = defaultdict(float)
     for m in messwerte:
         start = datetime.strptime(m["zeitVon"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(
             tzinfo=timezone.utc
         )
         hour = start.replace(minute=0, second=0, microsecond=0)
-        buckets[hour] += m["messwert"]
+        buckets[hour] += m["messwert"] / 1000
     return sorted(buckets.items())
 
 
@@ -81,12 +81,12 @@ def compute_hourly_cost(
 ) -> list[tuple[datetime, float, float]]:
     """Return (hour_utc, hour_cost, cumulative_cost) for each priced energy hour.
 
-    energy_buckets are (hour_utc, wh); price_map is {hour_utc: currency_per_kwh}.
+    energy_buckets are (hour_utc, kWh); price_map is {hour_utc: currency_per_kwh}.
     Hours at or before start_after, or with no known price, are skipped.
     """
     total = starting_total
     out: list[tuple[datetime, float, float]] = []
-    for hour, wh in energy_buckets:
+    for hour, kwh in energy_buckets:
         if start_after is not None and hour <= start_after:
             continue
         price = price_map.get(hour)
@@ -95,7 +95,7 @@ def compute_hourly_cost(
             # day-ahead so a priced hour is essentially always available by the
             # time the (1-2 day lagged) energy arrives.
             continue
-        cost = (wh / 1000.0) * price
+        cost = kwh * price
         total += cost
         out.append((hour, cost, total))
     return out

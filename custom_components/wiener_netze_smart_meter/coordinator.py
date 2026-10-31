@@ -5,7 +5,11 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+from homeassistant.components.recorder.models import (
+    StatisticData,
+    StatisticMetaData,
+    StatisticMeanType,
+)
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
@@ -14,6 +18,7 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.util.unit_conversion import EnergyConverter
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from wiener_netze_smart_meter_api import WNAPIClient
 from wiener_netze_smart_meter_api.exceptions import WNAPIAuthenticationError
@@ -35,15 +40,6 @@ from .logic import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# HA 2026.11 drops has_mean in favour of mean_type. Use mean_type where the
-# enum exists, fall back to has_mean on older cores.
-try:
-    from homeassistant.components.recorder.models import StatisticMeanType
-
-    _MEAN_FIELD = {"mean_type": StatisticMeanType.NONE}
-except ImportError:  # HA without StatisticMeanType
-    _MEAN_FIELD = {"has_mean": False}
 
 
 class WNSmartMeterCoordinator(DataUpdateCoordinator[dict[str, MeterReading]]):
@@ -93,22 +89,24 @@ class WNSmartMeterCoordinator(DataUpdateCoordinator[dict[str, MeterReading]]):
 
     def _energy_metadata(self, zaehlpunkt: str) -> StatisticMetaData:
         return StatisticMetaData(
-            **_MEAN_FIELD,
+            mean_type=StatisticMeanType.NONE,
             has_sum=True,
             name=f"Smart meter {zaehlpunkt[-6:]} hourly energy",
             source=DOMAIN,
             statistic_id=f"{DOMAIN}:{zaehlpunkt.lower()}_hourly_energy",
-            unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            unit_class=EnergyConverter.UNIT_CLASS,
         )
 
     def _cost_metadata(self, zaehlpunkt: str) -> StatisticMetaData:
         return StatisticMetaData(
-            **_MEAN_FIELD,
+            mean_type=StatisticMeanType.NONE,
             has_sum=True,
             name=f"Smart meter {zaehlpunkt[-6:]} hourly cost",
             source=DOMAIN,
             statistic_id=f"{DOMAIN}:{zaehlpunkt.lower()}_hourly_cost",
             unit_of_measurement=COST_CURRENCY,
+            unit_class=None,
         )
 
     async def _last_sum(self, statistic_id: str) -> tuple[float, datetime | None]:
@@ -136,11 +134,11 @@ class WNSmartMeterCoordinator(DataUpdateCoordinator[dict[str, MeterReading]]):
         )
 
         statistics: list[StatisticData] = []
-        for start, wh in bucket_hourly(messwerte):
+        for start, kwh in bucket_hourly(messwerte):
             if start_after is not None and start <= start_after:
                 continue
-            total += wh
-            statistics.append(StatisticData(start=start, state=wh, sum=total))
+            total += kwh
+            statistics.append(StatisticData(start=start, state=kwh, sum=total))
 
         if statistics:
             async_add_external_statistics(self.hass, metadata, statistics)
@@ -207,9 +205,9 @@ class WNSmartMeterCoordinator(DataUpdateCoordinator[dict[str, MeterReading]]):
 
             total = 0.0
             energy_stats: list[StatisticData] = []
-            for start, wh in buckets:
-                total += wh
-                energy_stats.append(StatisticData(start=start, state=wh, sum=total))
+            for start, kwh in buckets:
+                total += kwh
+                energy_stats.append(StatisticData(start=start, state=kwh, sum=total))
             async_add_external_statistics(
                 self.hass, self._energy_metadata(zaehlpunkt), energy_stats
             )
